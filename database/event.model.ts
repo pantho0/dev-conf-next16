@@ -112,15 +112,12 @@ EventSchema.index({ slug: 1 });
  * 1. Generate URL-friendly slug from title (only if title changed)
  * 2. Normalize date to ISO format
  * 3. Normalize time to consistent format (HH:MM)
- *
- * Note: Use promise-based middleware (no `next` callback) to avoid
- * mixed-callback-and-promise errors in Mongoose 6/7.
  */
-EventSchema.pre('save', async function () {
-  const event = this as unknown as IEvent;
+EventSchema.pre('save', async function (next) {
+  const event = this as IEvent;
 
   // Generate slug only if title is new or modified
-  if (this.isModified('title')) {
+  if (event.isModified('title')) {
     event.slug = event.title
       .toLowerCase()
       .trim()
@@ -130,39 +127,50 @@ EventSchema.pre('save', async function () {
       .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
 
     // Ensure slug uniqueness by appending timestamp if needed
-    const existingEvent = await this.model('Event').findOne({ slug: event.slug });
-    if (existingEvent && existingEvent._id.toString() !== (this as any)._id.toString()) {
+    const existingEvent = await mongoose.models.Event.findOne({ slug: event.slug });
+    if (existingEvent && existingEvent._id.toString() !== event._id.toString()) {
       event.slug = `${event.slug}-${Date.now()}`;
     }
   }
 
   // Normalize date to ISO format (YYYY-MM-DD)
-  if (this.isModified('date')) {
-    const parsedDate = new Date(event.date);
-    if (isNaN(parsedDate.getTime())) {
-      throw new Error('Date must be a valid date string');
+  if (event.isModified('date')) {
+    try {
+      const parsedDate = new Date(event.date);
+      if (isNaN(parsedDate.getTime())) {
+        throw new Error('Invalid date format');
+      }
+      event.date = parsedDate.toISOString().split('T')[0];
+    } catch (error) {
+      return next(new Error('Date must be a valid date string'));
     }
-    event.date = parsedDate.toISOString().split('T')[0];
   }
 
   // Normalize time to HH:MM format
-  if (this.isModified('time')) {
+  if (event.isModified('time')) {
     const timeRegex = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
     if (!timeRegex.test(event.time)) {
-      const timeParts = event.time.match(/(\d{1,2}):(\d{2})/);
-      if (timeParts) {
-        const hours = parseInt(timeParts[1], 10);
-        const minutes = parseInt(timeParts[2], 10);
-        if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
-          event.time = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+      // Try parsing common time formats
+      try {
+        const timeParts = event.time.match(/(\d{1,2}):(\d{2})/);
+        if (timeParts) {
+          const hours = parseInt(timeParts[1], 10);
+          const minutes = parseInt(timeParts[2], 10);
+          if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+            event.time = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+          } else {
+            throw new Error('Invalid time');
+          }
         } else {
-          throw new Error('Time must be in HH:MM format (24-hour)');
+          throw new Error('Invalid time format');
         }
-      } else {
-        throw new Error('Time must be in HH:MM format (24-hour)');
+      } catch (error) {
+        return next(new Error('Time must be in HH:MM format (24-hour)'));
       }
     }
   }
+
+  next();
 });
 
 // Prevent model recompilation in development
