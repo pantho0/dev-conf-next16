@@ -1,0 +1,3 @@
+version: "0.1"
+pull_requests:
+  auto_review: true
