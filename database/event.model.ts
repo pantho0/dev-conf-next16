@@ -1,9 +1,10 @@
-import mongoose, { Document, Model, Schema } from 'mongoose';
+import mongoose, { HydratedDocument, Model, Schema } from 'mongoose';
 
-// TypeScript interface for Event document
-export interface IEvent extends Document {
+// TypeScript interface for Event document (plain shape)
+export interface IEvent {
   title: string;
-  slug: string;
+  // Generated in a pre-save hook; not required at creation time
+  slug?: string;
   description: string;
   overview: string;
   image: string;
@@ -16,9 +17,13 @@ export interface IEvent extends Document {
   agenda: string[];
   organizer: string;
   tags: string[];
-  createdAt: Date;
-  updatedAt: Date;
+  // Added automatically by Mongoose timestamps
+  createdAt?: Date;
+  updatedAt?: Date;
 }
+
+// Hydrated document type for runtime documents
+export type EventDocument = HydratedDocument<IEvent>;
 
 // Event schema definition
 const EventSchema = new Schema<IEvent>(
@@ -114,7 +119,7 @@ EventSchema.index({ slug: 1 });
  * 3. Normalize time to consistent format (HH:MM)
  */
 EventSchema.pre('save', async function (next) {
-  const event = this as IEvent;
+  const event = this as EventDocument;
 
   // Generate slug only if title is new or modified
   if (event.isModified('title')) {
@@ -127,7 +132,9 @@ EventSchema.pre('save', async function (next) {
       .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
 
     // Ensure slug uniqueness by appending timestamp if needed
-    const existingEvent = await mongoose.models.Event.findOne({ slug: event.slug });
+    // Use the current model to ensure correct typing and avoid recompilation issues
+    const EventModel = this.constructor as Model<IEvent>;
+    const existingEvent = await EventModel.findOne({ slug: event.slug });
     if (existingEvent && existingEvent._id.toString() !== event._id.toString()) {
       event.slug = `${event.slug}-${Date.now()}`;
     }
@@ -142,7 +149,8 @@ EventSchema.pre('save', async function (next) {
       }
       event.date = parsedDate.toISOString().split('T')[0];
     } catch (error) {
-      return next(new Error('Date must be a valid date string'));
+      // @ts-ignore
+        return next(new Error('Date must be a valid date string'));
     }
   }
 
@@ -165,12 +173,14 @@ EventSchema.pre('save', async function (next) {
           throw new Error('Invalid time format');
         }
       } catch (error) {
-        return next(new Error('Time must be in HH:MM format (24-hour)'));
+        // @ts-ignore
+          return next(new Error('Time must be in HH:MM format (24-hour)'));
       }
     }
   }
 
-  next();
+  // @ts-ignore
+    next();
 });
 
 // Prevent model recompilation in development
